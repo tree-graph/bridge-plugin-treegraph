@@ -6,6 +6,7 @@ import conflux.web3j.response.Log;
 import org.apache.tomcat.util.buf.HexUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.web3j.abi.FunctionEncoder;
 import org.web3j.abi.FunctionReturnDecoder;
 import org.web3j.abi.TypeReference;
 import org.web3j.abi.datatypes.*;
@@ -15,10 +16,35 @@ import org.web3j.utils.Numeric;
 import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 import java.util.stream.Collectors;
 
 public class Abi {
+    /*
+    function claimByAdmin(uint srcChainId, address srcContract, address localContract,
+        uint[] memory tokenIds, uint[] memory amounts, string[] memory uris,
+        address issuer, uint userNonce_) public onlyRole(Roles.CLAIM_ON_VAULT)
+     */
+    public static String encodeClaimByAdmin(int srcChainId, String srcContract, String localContract,
+                                            String[] tokenIds, String[] amounts, String[] uris,
+                                            String issuer, int userNonce_) {
+        List<Utf8String> uriWrap = Arrays.stream(uris).map(s -> new Utf8String(s)).collect(Collectors.toList());
+        Function ClaimByAdmin = new Function(
+                "claimByAdmin", Arrays.asList(
+                new Uint256(srcChainId),
+                new Address(srcContract),
+                new Address(localContract),
+                new DynamicArray<>(Uint256.class, Arrays.stream(tokenIds).map(id->new Uint256(Numeric.toBigInt(id))).collect(Collectors.toList())),
+                new DynamicArray<>(Uint256.class, Arrays.stream(amounts).map(id->new Uint256(Numeric.toBigInt(id))).collect(Collectors.toList())),
+                new DynamicArray<>(Utf8String.class, uriWrap),
+                new Address(issuer),
+                new Uint256(userNonce_)
+        ), Collections.emptyList());
+        String encodedFunction = FunctionEncoder.encode(ClaimByAdmin);
+        return encodedFunction;
+    }
+
     /*
     event CrossRequest(
             address indexed asset,
@@ -33,22 +59,32 @@ public class Abi {
      */
     public static final Event CrossRequest = new Event("CrossRequest",
             Arrays.<TypeReference<?>>asList(
-                    new TypeReference<Address>(true) {},//asset
-                    new TypeReference<Address>(true) {},//from
-                    new TypeReference<DynamicArray<Uint256>>(false) {},//tokenIds
-                    new TypeReference<DynamicArray<Uint256>>(false) {},//amounts
-                    new TypeReference<DynamicArray<Utf8String>>(false) {},//uris
-                    new TypeReference<Uint256>(false) {},//toChainId
-                    new TypeReference<Address>(false) {},//targetContract
-                    new TypeReference<Uint256>(false) {}//userNonce
+                    new TypeReference<Address>(true) {
+                    },//asset
+                    new TypeReference<Address>(true) {
+                    },//from
+                    new TypeReference<DynamicArray<Uint256>>(false) {
+                    },//tokenIds
+                    new TypeReference<DynamicArray<Uint256>>(false) {
+                    },//amounts
+                    new TypeReference<DynamicArray<Utf8String>>(false) {
+                    },//uris
+                    new TypeReference<Uint256>(false) {
+                    },//toChainId
+                    new TypeReference<Address>(false) {
+                    },//targetContract
+                    new TypeReference<Uint256>(false) {
+                    }//userNonce
             )
     );
+
     public static void decodeCrossRequest(Log log, CrossInfo info) {
         List<String> topics = log.getTopics();
         info.asset = new Address(topics.get(1)).toString();
         info.from = new Address(topics.get(2)).toString();
         info.txnHash = log.getTransactionHash().get();
     }
+
     public static List<CrossItem> decodeCrossRequest(String encoded, CrossInfo info) {
         List<Type> result = FunctionReturnDecoder.decode(encoded,
                 CrossRequest.getNonIndexedParameters());
@@ -75,13 +111,13 @@ public class Abi {
 
     private static void debugCrossItems(List<Uint256> tokenIds, List<Uint256> amounts, List<Utf8String> uris, BigInteger toChainId, String targetContract, BigInteger userNonce) {
         Logger log = LoggerFactory.getLogger("");
-        log.info("tokenIds {}", tokenIds.stream().map(u->u.getValue()).collect(Collectors.toList()));
-        log.info("amounts {}", amounts.stream().map(u->u.getValue()).collect(Collectors.toList()));
-        log.info("uris {}", uris.stream().map(u->{
+        log.info("tokenIds {}", tokenIds.stream().map(u -> u.getValue()).collect(Collectors.toList()));
+        log.info("amounts {}", amounts.stream().map(u -> u.getValue()).collect(Collectors.toList()));
+        log.info("uris {}", uris.stream().map(u -> {
             byte[] value = u.getValue().getBytes();
             log.info("bytes {}", HexUtils.toHexString(value));
             String str = new String(value);
-            return str +" Length "+str.length();
+            return str + " Length " + str.length();
         }).collect(Collectors.toList()));
         log.info("toChainId {}", toChainId);
         log.info("targetContract {}", targetContract);

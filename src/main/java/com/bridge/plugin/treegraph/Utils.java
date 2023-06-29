@@ -1,7 +1,6 @@
 package com.bridge.plugin.treegraph;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.DeserializationConfig;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.http.*;
@@ -29,6 +28,14 @@ public class Utils {
         }
     }
 
+    public static void sleep(long ms) {
+        try {
+            Thread.sleep(ms);
+        } catch (InterruptedException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
     public static <T> T toObj(Object from, Class<T> t) {
         try {
             return objectMapper.readValue(toJson(from), t);
@@ -40,7 +47,7 @@ public class Utils {
     public static <T> T getRpc(RestTemplate restTemplate, String url, Class<T> t) {
         HashMap map = restTemplate.getForObject(url, HashMap.class);
         if (!map.get("code").toString().equals("0")) {
-            throw new RuntimeException("RPC failed:" + toJson(map));
+            throw new RuntimeException("RPC failed " + url + " : " + toJson(map));
         }
         return toObj(map.get("data"), t);
     }
@@ -53,7 +60,7 @@ public class Utils {
         return headers;
     }
 
-    public static void postRpc(RestTemplate restTemplate, String url, Object data) {
+    public static Object postRpc(RestTemplate restTemplate, String url, Object data) {
         HttpHeaders headers = getHttpHeaders();
         HttpEntity<?> entity = new HttpEntity<>(data, headers);
 
@@ -65,6 +72,7 @@ public class Utils {
         if (!map.get("code").toString().equals("0")) {
             throw new RuntimeException("RPC failed:" + toJson(map));
         }
+        return map.get("data");
     }
 
     static TimeZone tz = TimeZone.getTimeZone("UTC");
