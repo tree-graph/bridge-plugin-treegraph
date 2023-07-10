@@ -6,6 +6,9 @@ import java.io.IOException;
 
 public class ClassPatcher {
     public static void changeCode() {
+
+    }
+    public static void changeCode1() {
         //jvm --add-opens java.base/java.lang=ALL-UNNAMED
         ClassPool pool = ClassPool.getDefault();
         try {

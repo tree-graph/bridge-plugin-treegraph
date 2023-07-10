@@ -2,19 +2,19 @@ package com.bridge.plugin.treegraph.service;
 
 import com.bridge.plugin.treegraph.Utils;
 import com.bridge.plugin.treegraph.blockchain.Abi;
+import com.bridge.plugin.treegraph.model.RegisterRouteVO;
 import conflux.web3j.jsonrpc.Account;
 import conflux.web3j.jsonrpc.Cfx;
 import conflux.web3j.jsonrpc.Request;
+import conflux.web3j.jsonrpc.RpcException;
+import conflux.web3j.request.Call;
 import conflux.web3j.request.Epoch;
 import conflux.web3j.request.LogFilter;
-import conflux.web3j.response.Block;
-import conflux.web3j.response.Log;
-import conflux.web3j.response.Receipt;
-import conflux.web3j.response.Status;
-import conflux.web3j.types.Address;
+import conflux.web3j.response.*;
 import conflux.web3j.types.RawTransaction;
 import conflux.web3j.types.SendTransactionResult;
 import jakarta.annotation.PostConstruct;
+import org.apache.tomcat.util.buf.HexUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -22,10 +22,15 @@ import org.springframework.boot.web.client.RestTemplateBuilder;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestTemplate;
 import org.web3j.crypto.Hash;
+import org.web3j.protocol.core.Response;
 import org.web3j.utils.Convert;
+import sdk.Address;
 
 import java.math.BigInteger;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 @Component
 public class ConsortiumPlugin {
@@ -33,7 +38,7 @@ public class ConsortiumPlugin {
     static final String ClaimStepWaitingTx = "waiting_tx";
     static final String ClaimStepError = "error";
     Logger log = LoggerFactory.getLogger(getClass());
-    private Cfx cfx;
+    public Cfx cfx;
     private LogFilter filter;
     private RestTemplate restTemplate;
     private ChainConfig config;
@@ -163,9 +168,9 @@ public class ConsortiumPlugin {
 
     public void claim() throws Exception {
         String url = bridgeHost + "/getPooledClaim?id=" + chainId;
-        log.info("url {}", url);
+        log.debug("url {}", url);
         HashMap claimPoolMap = Utils.getRpc(restTemplate, url, HashMap.class);
-        log.info("claim pool is {}", Utils.toJson(claimPoolMap));
+        log.debug("claim pool is {}", Utils.toJson(claimPoolMap));
         if ((Boolean) claimPoolMap.get("hasPooledClaim")) {
             ClaimPool claimPool = Utils.toObj(claimPoolMap.get("claim"), ClaimPool.class);
             if (claimPool.step.equals(ClaimStepSendingTx)) {
@@ -183,13 +188,13 @@ public class ConsortiumPlugin {
 
     void checkClaimTask() {
         String url = bridgeHost + "/checkClaimTask?id=" + chainId + "&clientName=pluginChain"+chainId;
-        log.info("url {}", url);
+        log.debug("url {}", url);
         String ret = Utils.getRpc(restTemplate, url, String.class);
-        log.info("checkClaimTask result {}", ret);
+        log.debug("checkClaimTask result {}", ret);
         if ("0".equals(ret)) {
             return;
         }
-        log.info("no claim task");
+        log.debug("no claim task");
         Utils.sleep(5_000);
     }
 
@@ -201,7 +206,7 @@ public class ConsortiumPlugin {
                 continue;
             }
             Receipt receipt = receiptOp.get();
-            log.info("tx {} status {}", receipt.getTransactionHash(), receipt.getOutcomeStatus());
+            log.info("claim tx {} status {}", receipt.getTransactionHash(), receipt.getOutcomeStatus());
             String comment = "";
             if (receipt.getOutcomeStatus() == 0) {
                 log.info("tx succeeded");
@@ -238,6 +243,17 @@ public class ConsortiumPlugin {
         );
 
         String hexTo = sdk.Address.decode(vaultAddress);
+        AtomicReference<BigInteger> nonceHolder = new AtomicReference<>(BigInteger.ZERO);
+        SendTransactionResult result = sendTx(hexTo, fnData, nonceHolder);
+        if (result.getRawError() == null) {
+            updateClaimPool(claimPool, result.getTxHash(), nonceHolder.get());
+            return;
+        }
+        log.info("send tx result, error type {}, raw error {}", result.getErrorType(), result.getRawError());
+        throw new RuntimeException("send claim tx fail");
+    }
+
+    protected SendTransactionResult sendTx(String hexTo, String fnData, AtomicReference<BigInteger> nonceHolder) throws Exception {
         BigInteger nonce = account.getNonce();
         BigInteger remoteNonce = cfx.getNonce(account.getAddress()).sendAndGet();
         if (!remoteNonce.equals(nonce)) {
@@ -252,15 +268,43 @@ public class ConsortiumPlugin {
         RawTransaction cfxTx = RawTransaction.call(nonce, gasLimit, hexTo, BigInteger.ZERO, epoch, fnData);
         String signedTx = account.sign(cfxTx);
         String txHash = Hash.sha3(signedTx);
-        log.info("claim tx hash {} user nonce {}", txHash, info.userNonce);
+        log.info(" tx hash {} sender nonce {}", txHash, cfxTx.getNonce());
+        nonceHolder.set(cfxTx.getNonce());
+
+//        testCall(cfxTx, epoch, vaultAddress);
 
         SendTransactionResult result = account.send(signedTx);
-        if (result.getRawError() == null) {
-            updateClaimPool(claimPool, txHash, nonce);
-            return;
+        return result;
+    }
+
+    private void testCall(RawTransaction cfxTx, BigInteger epoch, String hexTo) {
+        log.info("test call to {}", hexTo);
+        Call call = new Call();
+        call.setData(cfxTx.getData());
+//        call.setNonce(cfxTx.getNonce());
+        // we got a error: InvalidNonce { expected: 1, got: 742 }, so, use 1
+        call.setNonce(BigInteger.valueOf(1));
+        call.setFrom(hexTo);
+        call.setGas(cfxTx.getGas());
+        call.setGasPrice(cfxTx.getGasPrice());
+        call.setValue(cfxTx.getValue());
+        try {
+            String ret = cfx.call(call, Epoch.numberOf(epoch)).sendAndGet();
+            log.info("test call result {}", ret);
+        } catch (RpcException e) {
+            String data = Optional.ofNullable(e.getError()).map(Response.Error::getData).orElse("").toLowerCase();
+            if (!data.isEmpty()){
+                log.error("error data raw : {}", data);
+                Matcher matcher = Pattern.compile("0x[0-9a-z]*").matcher(data);
+                matcher.find();
+                data = matcher.group();
+                log.error("matched data {}", data);
+                byte[] bytes = HexUtils.fromHexString(data.substring(2));
+                log.error("error data is : {}", new String(bytes));
+            } else {
+                log.error("test call fail", e);
+            }
         }
-        log.info("send tx result, error type {}, raw error {}", result.getErrorType(), result.getRawError());
-        throw new RuntimeException("send claim tx fail");
     }
 
     private void updateClaimPool(ClaimPool claimPool, String claimTxHash, BigInteger nonce) {
@@ -276,6 +320,18 @@ public class ConsortiumPlugin {
             return;
         }
         throw new RuntimeException("updateClaimPool fail");
+    }
+
+    public SendTransactionResult registerArrival(RegisterRouteVO req) throws Exception {
+        String s = Abi.encodeRegisterArrival(req.remoteContract, req.remoteChainId, req.op, req.uriMode, req.localContract);
+        SendTransactionResult sendTransactionResult = sendTx(Address.decode(vaultAddress), s, new AtomicReference<>(BigInteger.ZERO));
+        return sendTransactionResult;
+    }
+
+    public SendTransactionResult registerDeparture(RegisterRouteVO req) throws Exception {
+        String s = Abi.encodeRegisterDeparture(req.localContract, req.remoteChainId, req.op, req.uriMode, req.remoteContract);
+        SendTransactionResult sendTransactionResult = sendTx(Address.decode(vaultAddress), s, new AtomicReference<>(BigInteger.ZERO));
+        return sendTransactionResult;
     }
 }
 

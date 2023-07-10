@@ -11,6 +11,7 @@ import org.web3j.abi.FunctionReturnDecoder;
 import org.web3j.abi.TypeReference;
 import org.web3j.abi.datatypes.*;
 import org.web3j.abi.datatypes.generated.Uint256;
+import org.web3j.abi.datatypes.generated.Uint8;
 import org.web3j.utils.Numeric;
 
 import java.math.BigInteger;
@@ -21,6 +22,38 @@ import java.util.List;
 import java.util.stream.Collectors;
 
 public class Abi {
+    public static enum EIP {EipNotSet,EIP20,EIP721,EIP1155}
+    public static enum OP {OpNotSet,MINT, BURN20, BURN721, BURN1155, TRANSFER}
+    public static enum UriMode {UriModeNotSet,BaseUri,STORAGE}
+
+    /*
+    function registerDeparture(address local, uint targetChainId, OP op, URI_MODE uriMode,
+        address remoteContract)
+     */
+    public static String encodeRegisterDeparture(String local, int targetChainId, OP op, UriMode uriMode, String remoteContract) {
+        Function f = new Function("registerDeparture", Arrays.asList(
+                new Address(local),
+                new Uint256(targetChainId),
+                new Uint8(op.ordinal()),
+                new Uint8(uriMode.ordinal()),
+                new Address(remoteContract)
+        ), Collections.emptyList());
+        return FunctionEncoder.encode(f);
+    }
+    /*
+    function registerArrival(address remoteContract, uint remoteChainId, OP op, URI_MODE uriMode,
+        address localContract)
+     */
+    public static String encodeRegisterArrival(String remoteContract, int remoteChainId, OP op, UriMode uriMode, String localContract) {
+        Function f = new Function("registerArrival", Arrays.asList(
+                new Address(remoteContract),
+                new Uint256(remoteChainId),
+                new Uint8(op.ordinal()),
+                new Uint8(uriMode.ordinal()),
+                new Address(localContract)
+        ), Collections.emptyList());
+        return FunctionEncoder.encode(f);
+    }
     /*
     function claimByAdmin(uint srcChainId, address srcContract, address localContract,
         uint[] memory tokenIds, uint[] memory amounts, string[] memory uris,
